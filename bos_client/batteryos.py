@@ -108,9 +108,15 @@ class Calc(BatteryOS):
         self.slug = None
         self.iso = None
         self.name = None
-        self.category = None
+
+        # key in params, not in response for calc
+        # self.category = None
+
         self.status = None
+
+        # will be added
         self.refdate = None
+
         self.start = None
         self.end = None
 
@@ -135,7 +141,8 @@ class Calc(BatteryOS):
 
         endpoint = f"calc/{self.slug}/nodescenarios/"
         content = self.get_content(endpoint)
-        for item in content:
+
+        for ns_slug in content:
             # data_slug = scenario_content.get("data_slug")
             # data_list = [x for x in self.data if x.slug == data_slug]
             # if not data_list:
@@ -143,7 +150,9 @@ class Calc(BatteryOS):
             #     data.load()
             #     self.data.append(data)
 
-            slug = item.get("node_slug")
+            resp = self.get_content(endpoint + ns_slug + "/")
+
+            slug = resp.get("node_slug")
             if slug in self.nodes:
                 node = self.nodes[slug]
             else:
@@ -151,7 +160,7 @@ class Calc(BatteryOS):
                 node.load()
                 self.nodes[slug] = node
 
-            slug = item.get("scenario_slug", None)
+            slug = resp.get("scenario_slug", None)
             if slug in self.scenarios:
                 scenario = self.scenarios[slug]
             else:
@@ -159,12 +168,13 @@ class Calc(BatteryOS):
                 scenario.load()
                 self.scenarios[slug] = scenario
 
-            slug = item.get("node_scenario_slug")
+            slug = resp.get("nodescenario_slug")
             if slug not in self.node_scenarios:
                 node_scenario = NodeScenario(calc=self, slug=slug)
                 node_scenario.node = node
                 node_scenario.scenario = scenario
                 self.node_scenarios[slug] = node_scenario
+                node_scenario.load()
 
 
 class Node(BatteryOS):
@@ -180,15 +190,15 @@ class Node(BatteryOS):
 
         self.iso = None
         self.name = None
-        self.category = None
+        # self.category = None
 
     def load(self):
-        # endpoint = f"calc/{self.calc.slug}/nodes/{self.slug}/"
-        # content = self.get_content(endpoint)
-        content = {}
+        endpoint = f"calc/{self.calc.slug}/nodes/{self.slug}/"
+        content = self.get_content(endpoint)
+        # content = {}
 
         self.iso = self.calc.iso
-        self.name = content.get("node_name")
+        self.name = content.get("name")
 
 
 class Scenario(BatteryOS):
@@ -203,22 +213,24 @@ class Scenario(BatteryOS):
         self.slug = slug
 
         self.name = None
-        self.params = None
+
+        # params are no more present in response, hence removing it
+        # self.params = None
 
     def load(self):
         endpoint = f"calc/{self.calc.slug}/scenarios/{self.slug}/"
         content = self.get_content(endpoint)
 
-        self.name = content.get("scenario_name")
-        self.params = ScenarioParams()
-        self.params.load(content.get("params"))
+        self.name = content.get("name")
+        # self.params = ScenarioParams()
+        # self.params.load(content.get("params"))
 
 
-class ScenarioParams(BatteryOS):
+class NodeScenarioParams(BatteryOS):
     # pylint: disable=too-many-instance-attributes
 
-    def __init__(self, scenario=None):
-        self.scenario = scenario
+    def __init__(self, node_scenario=None):
+        self.node_scenario = node_scenario
         self.capacity = None
         self.duration = None
         self.min_cycles = None
@@ -261,12 +273,15 @@ class ScenarioParams(BatteryOS):
 
         content = args[0]
 
-        if isinstance(content, list):
-            for param in content:
-                setattr(self, param["name"], param["value"])
-        elif isinstance(content, dict):
-            for key in content:
-                setattr(self, key, content.get(key))
+        # if isinstance(content, list):
+        #     for param in content:
+        #         setattr(self, param["name"], param["value"])
+        # elif isinstance(content, dict):
+        #     for key in content:
+        #         setattr(self, key, content.get(key))
+
+        for key in content:
+            setattr(self, key, content.get(key))
 
 
 class NodeScenario(BatteryOS):
@@ -285,34 +300,36 @@ class NodeScenario(BatteryOS):
         self.node = None
         self.scenario = None
         self.status = None
+        self.params = None
 
     def load(self):
-        calc_slug = Calc().slug
+        endpoint = f"calc/{self.calc.slug}/nodescenarios/"
+        # node and scenario are already set in Calc, hence removing the same from here
+        # content = self.get_content(endpoint)
 
-        endpoint = f"calc/{calc_slug}/nodescenarios/"
-        content = self.get_content(endpoint)
+        # self.node = Node(calc=self.calc)
+        # self.node.slug = content[0].get("node_slug")
+        # self.node.name = content[0].get("node_name")
+        # self.slug = content[0].get("node_scenario_slug")
+        # self.scenario = Scenario(calc=self.calc)
+        # self.scenario.slug = content[0].get("scenario_slug")
+        # self.scenario.name = content[0].get("scenario_name")
 
-        self.node = Node()
-        self.node.slug = content[0].get("node_slug")
-        self.node.name = content[0].get("node_name")
-        self.slug = content[0].get("node_scenario_slug")
-        self.scenario = Scenario(calc=None)
-        self.scenario.slug = content[0].get("scenario_slug")
-        self.scenario.name = content[0].get("scenario_name")
-
+        # TODO
         # content = self.get_content(endpoint + self.slug + "/result/")
         # self.detail = content.get("detail")
 
         content = self.get_content(endpoint + self.slug + "/params/")
-        params = ScenarioParams(scenario=self)
+        params = NodeScenarioParams(node_scenario=self)
+        self.params = params
         params.load(content.get("params"))
 
         content = self.get_content(endpoint + self.slug + "/status/")
         self.status = content.get("status")
 
-    @property
-    def params(self):
-        return self.scenario.params
+    # @property
+    # def params(self):
+    #     return self.scenario.params
 
 
 class Data(BatteryOS):
