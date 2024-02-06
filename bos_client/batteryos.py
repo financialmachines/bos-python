@@ -274,8 +274,8 @@ class ScenarioParams(BatteryOS):
         endpoint = f"calc/{self.scenario.calc.slug}/scenarios/{self.scenario.slug}/params/"
         content = self.request(endpoint)
 
-        for key in content:
-            setattr(self, key, content.get(key))
+        for key in content["params"]:
+            setattr(self, key, content["params"].get(key))
 
 
 class NodeScenario(BatteryOS):
