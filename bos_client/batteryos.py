@@ -64,7 +64,7 @@ class BatteryosApiPathNotDefinedError(Exception):
 
 class BatteryOS:
     @staticmethod
-    def get_content(endpoint):
+    def request(endpoint, method="get", data=None):
         token = os.getenv("BATTERYOS_TOKEN", None)
         if token is None:
             raise BatteryosApiTokenNotFoundError
@@ -75,11 +75,19 @@ class BatteryOS:
         if apipath is None:
             raise BatteryosApiPathNotDefinedError
 
-        response = requests.get(
-            apipath + endpoint,
-            headers=headers,
-            timeout=30,
-        )
+        request_params = {
+            "url": apipath + endpoint,
+            "headers": headers,
+            "timeout": 30,
+        }
+        if data:
+            request_params["data"] = data
+
+        req_method = getattr(requests, method.lower(), None)
+        if req_method is None:
+            return {}
+
+        response = req_method(**request_params)
         if response.status_code != 200:
             print(f"{apipath + endpoint}: {response.status_code}")
             return {}
@@ -108,12 +116,12 @@ class Calc(BatteryOS):
         self.slug = None
         self.iso = None
         self.name = None
+        self.user = None
         self.category = None
         self.status = None
         self.refdate = None
         self.start = None
         self.end = None
-
         self.data = {}
         self.nodes = {}
         self.scenarios = {}
@@ -124,7 +132,7 @@ class Calc(BatteryOS):
 
     def load(self):
         endpoint = f"calc/{self.slug}/"
-        content = self.get_content(endpoint)
+        content = self.request(endpoint)
         self.iso = content.get("iso")
         self.name = content.get("name")
         self.status = content.get("status")
@@ -133,17 +141,18 @@ class Calc(BatteryOS):
         self.end = todate(content.get("enddate", None))
         self.refdate = todate(content.get("refdate", None))
 
-        endpoint = f"calc/{self.slug}/nodescenarios/"
-        content = self.get_content(endpoint)
-        for item in content:
-            # data_slug = scenario_content.get("data_slug")
-            # data_list = [x for x in self.data if x.slug == data_slug]
-            # if not data_list:
-            #     data = Data(slug=data_slug)
-            #     data.load()
-            #     self.data.append(data)
+        # Get user
+        endpoint = f"calc/{self.slug}/user/"
+        content = self.request(endpoint)
+        self.user = content.get("user")
 
-            slug = item.get("node_slug")
+        endpoint = f"calc/{self.slug}/nodescenarios/"
+        content = self.request(endpoint)
+
+        for ns_slug in content:
+            ns_content = self.request(endpoint + ns_slug + "/")
+
+            slug = ns_content.get("node_slug")
             if slug in self.nodes:
                 node = self.nodes[slug]
             else:
@@ -151,7 +160,7 @@ class Calc(BatteryOS):
                 node.load()
                 self.nodes[slug] = node
 
-            slug = item.get("scenario_slug", None)
+            slug = ns_content.get("scenario_slug", None)
             if slug in self.scenarios:
                 scenario = self.scenarios[slug]
             else:
@@ -159,19 +168,27 @@ class Calc(BatteryOS):
                 scenario.load()
                 self.scenarios[slug] = scenario
 
-            slug = item.get("node_scenario_slug")
+            slug = ns_content.get("nodescenario_slug")
             if slug not in self.node_scenarios:
                 node_scenario = NodeScenario(calc=self, slug=slug)
                 node_scenario.node = node
                 node_scenario.scenario = scenario
+                node_scenario.load()
                 self.node_scenarios[slug] = node_scenario
+
+    def set_user(self, user):
+        endpoint = f"calc/{self.slug}/user/"
+        data = {"user": user}
+        content = self.request(endpoint, method="put", data=data)
+        self.user = content.get("user")
+        return self.user
 
 
 class Node(BatteryOS):
     """
     GET
     - calc/<calc_slug>/nodes/
-    ? calc/<calc_slug>/nodes/<node_slug>/
+    - calc/<calc_slug>/nodes/<node_slug>/
     """
 
     def __init__(self, calc=None, slug=None):
@@ -180,15 +197,13 @@ class Node(BatteryOS):
 
         self.iso = None
         self.name = None
-        self.category = None
 
     def load(self):
-        # endpoint = f"calc/{self.calc.slug}/nodes/{self.slug}/"
-        # content = self.get_content(endpoint)
-        content = {}
+        endpoint = f"calc/{self.calc.slug}/nodes/{self.slug}/"
+        content = self.request(endpoint)
 
         self.iso = self.calc.iso
-        self.name = content.get("node_name")
+        self.name = content.get("name")
 
 
 class Scenario(BatteryOS):
@@ -196,22 +211,22 @@ class Scenario(BatteryOS):
     GET
     - calc/<calc_slug>/scenarios/
     - calc/<calc_slug>/scenarios/<scenario_slug>/
+    - calc/<calc_slug>/scenarios/<scenario_slug>/params/
     """
 
     def __init__(self, calc=None, slug=None):
         self.calc = calc
         self.slug = slug
-
         self.name = None
         self.params = None
 
     def load(self):
         endpoint = f"calc/{self.calc.slug}/scenarios/{self.slug}/"
-        content = self.get_content(endpoint)
+        content = self.request(endpoint)
 
-        self.name = content.get("scenario_name")
-        self.params = ScenarioParams()
-        self.params.load(content.get("params"))
+        self.name = content.get("name")
+        self.params = ScenarioParams(scenario=self)
+        self.params.load()
 
 
 class ScenarioParams(BatteryOS):
@@ -255,27 +270,20 @@ class ScenarioParams(BatteryOS):
         self.operational_months = None
         self.model = None
 
-    def load(self, *args):
-        if not args:
-            return
+    def load(self):
+        endpoint = f"calc/{self.scenario.calc.slug}/scenarios/{self.scenario.slug}/params/"
+        content = self.request(endpoint)
 
-        content = args[0]
-
-        if isinstance(content, list):
-            for param in content:
-                setattr(self, param["name"], param["value"])
-        elif isinstance(content, dict):
-            for key in content:
-                setattr(self, key, content.get(key))
+        for key in content["params"]:
+            setattr(self, key, content["params"].get(key))
 
 
 class NodeScenario(BatteryOS):
     """
     GET
     - calc/<calc_slug>/nodescenarios/
-    ? calc/<calc_slug>/nodescenarios/<nodescenario_slug>/
+    - calc/<calc_slug>/nodescenarios/<nodescenario_slug>/
     - calc/<calc_slug>/nodescenarios/<nodescenario_slug>/result/
-    - calc/<calc_slug>/nodescenarios/<nodescenario_slug>/params/
     - calc/<calc_slug>/nodescenarios/<nodescenario_slug>/status/
     """
 
@@ -287,27 +295,9 @@ class NodeScenario(BatteryOS):
         self.status = None
 
     def load(self):
-        calc_slug = Calc().slug
+        endpoint = f"calc/{self.calc.slug}/nodescenarios/"
 
-        endpoint = f"calc/{calc_slug}/nodescenarios/"
-        content = self.get_content(endpoint)
-
-        self.node = Node()
-        self.node.slug = content[0].get("node_slug")
-        self.node.name = content[0].get("node_name")
-        self.slug = content[0].get("node_scenario_slug")
-        self.scenario = Scenario(calc=None)
-        self.scenario.slug = content[0].get("scenario_slug")
-        self.scenario.name = content[0].get("scenario_name")
-
-        # content = self.get_content(endpoint + self.slug + "/result/")
-        # self.detail = content.get("detail")
-
-        content = self.get_content(endpoint + self.slug + "/params/")
-        params = ScenarioParams(scenario=self)
-        params.load(content.get("params"))
-
-        content = self.get_content(endpoint + self.slug + "/status/")
+        content = self.request(endpoint + self.slug + "/status/")
         self.status = content.get("status")
 
     @property
@@ -334,7 +324,7 @@ class Data(BatteryOS):
 
     def load(self):
         # endpoint = f"data/{self.slug}/"
-        # content = self.get_content(endpoint)
+        # content = self.request(endpoint)
         content = {}
 
         self.iso = content.get("iso")
